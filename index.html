@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>FLIRC8 — ANN Predictor (q_c, q_r, IRI, U)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+<style>
+  :root { --accent:#0b6cf2; --bg:#f7f9fc; --card:#fff; --txt:#1b1f24; --muted:#6b7280; }
+  *{box-sizing:border-box;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  body{margin:0;background:var(--bg);color:var(--txt);padding:24px;}
+  h1{margin:0 0 6px;font-size:22px}
+  p.sub{margin:0 0 18px;color:var(--muted);font-size:14px}
+  .wrap{max-width:980px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .card{background:var(--card);border-radius:12px;padding:18px;box-shadow:0 2px 8px rgba(0,0,0,.06)}
+  label{display:block;font-size:13px;margin:8px 0 4px;color:#374151}
+  input,select{width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:14px}
+  button{margin-top:14px;padding:10px 16px;background:var(--accent);color:#fff;border:0;border-radius:8px;cursor:pointer;font-size:14px}
+  button:disabled{background:#9ca3af;cursor:not-allowed}
+  .out{margin-top:14px;padding:12px;background:#f0f5ff;border-radius:8px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px;white-space:pre-wrap}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  #log{font-size:12px;color:var(--muted);max-height:140px;overflow:auto;margin-top:8px}
+  @media(max-width:760px){.wrap{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <!-- ========== TRAINING CARD ========== -->
+  <div class="card">
+    <h1>Model Training</h1>
+    <p class="sub">ANN trained in your browser on the embedded FLIRC8 dataset (n = 50).</p>
+
+    <div class="row">
+      <div><label>Epochs</label><input id="epochs" type="number" value="500" min="50" step="50"></div>
+      <div><label>Batch size</label><input id="batch" type="number" value="8" min="1"></div>
+    </div>
+    <button id="trainBtn">Train ANN</button>
+    <div class="out" id="metrics">Status: not trained yet.</div>
+    <div id="log"></div>
+  </div>
+
+  <!-- ========== PREDICTION CARD ========== -->
+  <div class="card">
+    <h1>Prediction</h1>
+    <p class="sub">Enter inputs to estimate q_c, q_r, IRI, U.</p>
+
+    <div class="row">
+      <div><label>ε (emissivity)</label><input id="eps" type="number" step="0.01" value="0.95"></div>
+      <div><label>T_atm (°C)</label><input id="Tatm" type="number" step="0.1" value="18.0"></div>
+      <div><label>T_in (°C)</label><input id="Tin" type="number" step="0.1" value="21.0"></div>
+      <div><label>h_c (W/m²·K)</label><input id="hc" type="number" step="0.1" value="8.7"></div>
+      <div><label>σ (W/m²·K⁴)</label><input id="sig" type="number" step="any" value="5.67e-8"></div>
+      <div><label>T_avg (°C)</label><input id="Tavg" type="number" step="0.1" value="21.0"></div>
+    </div>
+
+    <label>Pathology</label>
+    <select id="path">
+      <option value="is_CRK">CRK — Cracking</option>
+      <option value="is_EFF">EFF — Efflorescence</option>
+      <option value="is_SPL">SPL — Spalling</option>
+      <option value="is_BIO">BIO — Biological growth</option>
+      <option value="is_MJD">MJD — Major Joint Defect</option>
+      <option value="is_NoPath" selected>NoPath — No pathology</option>
+    </select>
+
+    <button id="predBtn" disabled>Predict</button>
+    <div class="out" id="result">Train the model first to enable predictions.</div>
+  </div>
+
+</div>
+
+<script>
+/* ---------- 1. Embedded dataset ---------- */
+const COLS = ["eps","Tatm","Tin","hc","sig","Tavg",
+              "is_CRK","is_EFF","is_SPL","is_BIO","is_MJD","is_NoPath",
+              "qc","qr","IRI","U"];
+
+const DATA = [
+[0.95,15.2,21.3,8.7,5.67e-8,15.74,0,0,0,0,0,1, 4.7, 2.8, 0.089,  5.157],
+[0.95,15.2,18.1,8.7,5.67e-8,15.50,0,0,0,0,0,1, 2.6, 1.6, 0.103,  3.145],
+[0.95,19.4,21.6,8.7,5.67e-8,20.96,0,0,0,0,0,1,13.6, 8.5, 0.709, 17.428],
+[0.95,16.2,18.4,8.7,5.67e-8,18.66,1,0,0,0,0,0,21.4,13.0, 1.118, 27.313],
+[0.95,19.8,20.4,8.7,5.67e-8,22.68,1,0,0,0,0,0,25.1,15.8, 4.800, 51.443],
+[0.95,19.9,21.2,8.7,5.67e-8,22.24,1,0,0,0,0,0,20.4,12.8, 1.800, 30.236],
+[0.95,17.3,18.5,8.7,5.67e-8,19.10,0,1,0,0,0,0,15.7, 9.6, 1.500, 23.653],
+[0.95,16.7,20.9,8.7,5.67e-8,19.22,0,1,0,0,0,0,21.9,13.4, 0.600, 25.113],
+[0.95,20.8,22.5,8.7,5.67e-8,22.36,0,1,0,0,0,0,13.6, 8.6, 0.918, 18.634],
+[0.95,21.2,22.7,8.7,5.67e-8,24.92,0,0,1,0,0,0,32.4,20.8, 2.480, 46.252],
+[0.95,22.5,23.3,8.7,5.67e-8,25.62,0,0,1,0,0,0,27.1,17.6, 3.900, 49.205],
+[0.95,17.0,20.6,8.7,5.67e-8,22.58,0,0,1,0,0,0,48.5,30.2, 1.550, 56.942],
+[0.95,16.8,18.4,8.7,5.67e-8,21.06,0,0,0,1,0,0,37.1,22.9, 2.663, 51.357],
+[0.95,18.4,22.5,8.7,5.67e-8,22.42,0,0,0,1,0,0,35.0,21.9, 0.980, 40.319],
+[0.95,21.9,22.5,8.7,5.67e-8,25.26,0,0,0,1,0,0,29.2,18.9, 5.600, 60.757],
+[0.95,18.5,21.9,8.7,5.67e-8,21.26,0,0,0,0,1,0,24.0,15.0, 0.812, 28.413],
+[0.95,16.4,19.3,8.7,5.67e-8,18.74,0,0,0,0,1,0,20.4,12.4, 0.807, 24.630],
+[0.95,19.3,18.0,8.7,5.67e-8,21.52,0,0,0,0,1,0,19.3,12.1,-1.708, 10.006],
+[0.95,22.4,19.4,8.7,5.67e-8,24.02,0,0,0,0,0,1,14.1, 9.1,-0.540, 11.066],
+[0.95,18.9,21.4,8.7,5.67e-8,21.66,1,0,0,0,0,0,24.0,15.0, 1.104, 30.022],
+[0.95,16.5,21.0,8.7,5.67e-8,17.34,0,0,0,0,0,1, 7.3, 4.4, 0.187,  8.290],
+[0.95,20.1,22.0,8.7,5.67e-8,21.36,0,0,0,0,0,1,11.0, 6.9, 0.663, 14.589],
+[0.95,17.8,19.6,8.7,5.67e-8,18.28,0,0,0,0,0,1, 4.2, 2.6, 0.267,  5.595],
+[0.95,22.0,22.7,8.7,5.67e-8,23.44,0,0,0,0,0,1,12.5, 8.0, 2.057, 24.008],
+[0.95,15.6,18.9,8.7,5.67e-8,16.62,0,0,0,0,0,1, 8.9, 5.3, 0.309, 10.486],
+[0.95,17.2,20.2,8.7,5.67e-8,19.78,1,0,0,0,0,0,22.4,13.8, 0.860, 27.042],
+[0.95,18.7,21.5,8.7,5.67e-8,20.92,1,0,0,0,0,0,19.3,12.0, 0.793, 23.609],
+[0.95,20.5,22.1,8.7,5.67e-8,23.44,1,0,0,0,0,0,25.6,16.3, 1.838, 35.755],
+[0.95,16.0,18.6,8.7,5.67e-8,18.16,1,0,0,0,0,0,18.8,11.4, 0.831, 23.168],
+[0.95,21.6,20.3,8.7,5.67e-8,24.24,1,0,0,0,0,0,23.0,14.8,-2.031, 11.612],
+[0.95,15.9,19.1,8.7,5.67e-8,17.52,0,1,0,0,0,0,14.1, 8.5, 0.506, 16.750],
+[0.95,18.0,20.7,8.7,5.67e-8,20.10,0,1,0,0,0,0,18.3,11.3, 0.778, 22.451],
+[0.95,19.6,21.8,8.7,5.67e-8,22.06,0,1,0,0,0,0,21.4,13.5, 1.118, 27.523],
+[0.95,22.1,22.4,8.7,5.67e-8,23.84,0,1,0,0,0,0,15.1, 9.7, 5.800, 47.587],
+[0.95,17.5,20.0,8.7,5.67e-8,20.14,0,1,0,0,0,0,23.0,14.2, 1.056, 28.631],
+[0.95,16.3,19.5,8.7,5.67e-8,20.74,0,0,1,0,0,0,38.6,23.7, 1.388, 46.046],
+[0.95,19.0,21.6,8.7,5.67e-8,23.86,0,0,1,0,0,0,42.3,26.8, 1.869, 52.578],
+[0.95,20.7,22.2,8.7,5.67e-8,24.06,0,0,1,0,0,0,29.2,18.7, 2.240, 41.690],
+[0.95,22.3,20.5,8.7,5.67e-8,27.70,0,0,1,0,0,0,47.0,30.8,-3.000, 29.847],
+[0.95,15.4,18.7,8.7,5.67e-8,19.48,0,0,1,0,0,0,35.5,21.6, 1.236, 42.033],
+[0.95,17.6,20.4,8.7,5.67e-8,21.14,0,0,0,1,0,0,30.8,19.1, 1.264, 37.617],
+[0.95,19.2,21.9,8.7,5.67e-8,23.58,0,0,0,1,0,0,38.1,24.1, 1.622, 47.038],
+[0.95,21.0,22.0,8.7,5.67e-8,24.72,0,0,0,1,0,0,32.4,20.8, 3.720, 53.154],
+[0.95,16.1,19.0,8.7,5.67e-8,19.52,0,0,0,1,0,0,29.8,18.2, 1.179, 36.013],
+[0.95,18.2,21.2,8.7,5.67e-8,22.40,0,0,0,1,0,0,36.5,22.9, 1.400, 44.163],
+[0.95,17.9,20.8,8.7,5.67e-8,20.42,0,0,0,0,1,0,21.9,13.6, 0.869, 26.600],
+[0.95,19.7,22.3,8.7,5.67e-8,22.52,0,0,0,0,1,0,24.5,15.5, 1.085, 30.489],
+[0.95,21.4,21.7,8.7,5.67e-8,23.68,0,0,0,0,1,0,19.8,12.7, 7.600, 62.171],
+[0.95,16.6,19.7,8.7,5.67e-8,19.06,0,0,0,0,1,0,21.4,13.1, 0.794, 25.614],
+[0.95,20.3,22.2,8.7,5.67e-8,23.00,0,0,0,0,1,0,23.5,14.9, 1.421, 31.335]
+];
+
+const CONT_IDX = [0,1,2,3,4,5];
+const PATH_IDX = [6,7,8,9,10,11];
+const OUT_IDX  = [12,13,14,15];
+const OUT_NAMES = ["q_c (W/m²)","q_r (W/m²)","IRI","U (W/m²·K)"];
+
+/* ---------- 2. Tensors + scaler stats ---------- */
+let model, xMean, xStd, yMean, yStd;
+
+function computeStats(arr){
+  const t = tf.tensor2d(arr);
+  const m = t.mean(0);
+  const s = t.sub(m).square().mean(0).sqrt().add(1e-8);
+  return [m,s];
+}
+
+function logMsg(t){ document.getElementById("log").innerHTML += t+"<br>"; }
+
+/* ---------- 3. Train ---------- */
+async function trainModel(){
+  document.getElementById("trainBtn").disabled = true;
+  document.getElementById("metrics").textContent = "Training…";
+  document.getElementById("log").innerHTML = "";
+
+  const Xc = DATA.map(r=>CONT_IDX.map(i=>r[i]));
+  const Xp = DATA.map(r=>PATH_IDX.map(i=>r[i]));
+  const Y  = DATA.map(r=>OUT_IDX.map(i=>r[i]));
+
+  [xMean,xStd] = computeStats(Xc);
+  [yMean,yStd] = computeStats(Y);
+
+  const XcTensor = tf.tensor2d(Xc).sub(xMean).div(xStd);
+  const XpTensor = tf.tensor2d(Xp);
+  const X = tf.concat([XcTensor, XpTensor], 1);
+  const y = tf.tensor2d(Y).sub(yMean).div(yStd);
+
+  model = tf.sequential();
+  model.add(tf.layers.dense({inputShape:[12],units:64,activation:"relu",kernelInitializer:"heNormal"}));
+  model.add(tf.layers.dropout({rate:0.1}));
+  model.add(tf.layers.dense({units:64,activation:"relu",kernelInitializer:"heNormal"}));
+  model.add(tf.layers.dropout({rate:0.1}));
+  model.add(tf.layers.dense({units:32,activation:"relu",kernelInitializer:"heNormal"}));
+  model.add(tf.layers.dense({units:4,activation:"linear"}));
+  model.compile({optimizer:tf.train.adam(1e-3),loss:"meanSquaredError",metrics:["mae"]});
+
+  const epochs = +document.getElementById("epochs").value;
+  const batch  = +document.getElementById("batch").value;
+
+  await model.fit(X,y,{
+    epochs, batchSize:batch, validationSplit:0.2, shuffle:true,
+    callbacks:{onEpochEnd:(e,l)=>{ if(e%50===0) logMsg(`epoch ${e}: loss=${l.loss.toFixed(4)} val_loss=${l.val_loss.toFixed(4)}`);}}
+  });
+
+  // training-set R² per output
+  const yhatScaled = model.predict(X);
+  const yhat = yhatScaled.mul(yStd).add(yMean);
+  const yTrue = tf.tensor2d(Y);
+  const ssRes = yTrue.sub(yhat).square().sum(0);
+  const ssTot = yTrue.sub(yTrue.mean(0)).square().sum(0);
+  const r2 = tf.scalar(1).sub(ssRes.div(ssTot));
+  const r2Vals = await r2.array();
+
+  let txt = "Training complete.\nR² (in-sample):\n";
+  OUT_NAMES.forEach((n,i)=> txt += `  ${n}: ${r2Vals[i].toFixed(3)}\n`);
+  document.getElementById("metrics").textContent = txt;
+
+  document.getElementById("predBtn").disabled = false;
+  document.getElementById("trainBtn").disabled = false;
+  document.getElementById("result").textContent = "Model ready — enter inputs and click Predict.";
+}
+
+/* ---------- 4. Predict ---------- */
+async function predict(){
+  if(!model){alert("Train first.");return;}
+  const cont = [
+    +document.getElementById("eps").value,
+    +document.getElementById("Tatm").value,
+    +document.getElementById("Tin").value,
+    +document.getElementById("hc").value,
+    +document.getElementById("sig").value,
+    +document.getElementById("Tavg").value
+  ];
+  const pathSel = document.getElementById("path").value;
+  const pathVec = ["is_CRK","is_EFF","is_SPL","is_BIO","is_MJD","is_NoPath"]
+                  .map(p => p===pathSel?1:0);
+
+  const xc = tf.tensor2d([cont]).sub(xMean).div(xStd);
+  const xp = tf.tensor2d([pathVec]);
+  const xin = tf.concat([xc,xp],1);
+
+  const yhat = model.predict(xin).mul(yStd).add(yMean);
+  const arr = (await yhat.array())[0];
+
+  let txt = "Predicted outputs:\n";
+  OUT_NAMES.forEach((n,i)=> txt += `  ${n.padEnd(14)} = ${arr[i].toFixed(3)}\n`);
+  document.getElementById("result").textContent = txt;
+}
+
+/* ---------- 5. Wire up ---------- */
+document.getElementById("trainBtn").addEventListener("click", trainModel);
+document.getElementById("predBtn").addEventListener("click", predict);
+</script>
+</body>
+</html>
